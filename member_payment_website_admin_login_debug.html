@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>সদস্য জমার হিসাব</title>
+<style>
+  body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0;padding:20px;color:#222}
+  .wrap{max-width:850px;margin:auto}
+  .card{background:#fff;border-radius:14px;padding:20px;margin:16px 0;box-shadow:0 4px 18px #0001}
+  h1,h2{margin-top:0}.row{display:flex;gap:10px;flex-wrap:wrap}
+  input,select,button{padding:12px;border:1px solid #ccd2d8;border-radius:8px;font-size:16px}
+  input,select{flex:1;min-width:160px}button{cursor:pointer;background:#111;color:#fff}
+  .member{padding:10px;border:1px solid #ddd;border-radius:8px;margin:8px 0}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+  .total{font-size:22px;font-weight:bold;margin-top:15px}
+  .muted{color:#666;font-size:14px}
+  .danger{background:#b42318}.pending{color:#b42318;font-weight:bold}.paid{color:#087443;font-weight:bold}.summary{font-size:18px;margin:8px 0}.grand{font-size:26px;font-weight:bold;margin:10px 0}.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>সদস্যদের মোট জমার হিসাব</h1>
+    <p class="muted">সদস্যদের হিসাব পড়া সবার জন্য উন্মুক্ত। টাকা যোগ/মুছতে Admin লগইন প্রয়োজন।</p>
+    <div id="overallResult"></div>
+    <p class="muted">নাম নির্বাচন করে সদস্যের মাসভিত্তিক জমা ও Pending status দেখুন।</p>
+    <div class="row">
+      <select id="memberSelect"></select>
+      <button onclick="showMember()">সদস্যের হিসাব দেখুন</button>
+    </div>
+    <div id="memberResult"></div>
+  </div>
+
+  <div class="card">
+    <h2>অ্যাডমিন লগইন</h2>
+    <p class="muted">শুধু অনুমোদিত অ্যাডমিন ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করতে পারবেন।</p>
+    <div class="row">
+      <input id="adminEmail" type="email" autocomplete="username" placeholder="Admin email">
+      <input id="adminPassword" type="password" autocomplete="current-password" placeholder="Admin password">
+      <button id="loginButton" type="button">লগইন</button>
+      <button id="logoutButton" type="button" class="hidden">লগআউট</button>
+    </div>
+    <p id="authStatus" class="muted">অ্যাডমিন লগইন করা নেই।</p>
+  </div>
+
+  <div class="card hidden" id="adminPanel">
+    <h2>অ্যাডমিন — টাকা যোগ করুন</h2>
+    <p class="muted">অ্যাডমিন লগইন করা থাকলেই টাকা যোগ/মুছতে পারবেন। তথ্য Firebase Firestore-এ সংরক্ষিত হবে।</p>
+    <div class="row">
+      <select id="adminMember"></select>
+      <input id="month" type="month">
+      <input id="amount" type="number" min="0" step="0.01" placeholder="টাকা (AED)">
+      <select id="status">
+        <option value="Paid">Paid — জমা হয়েছে</option>
+        <option value="Pending">Pending — এখনো জমা হয়নি</option>
+      </select>
+      <button onclick="addPayment()">এন্ট্রি যোগ করুন</button>
+    </div>
+    <div id="adminList"></div>
+  </div>
+
+  <div class="card">
+    <h2>Loan</h2>
+    <p class="muted">সর্বোচ্চ Loan: ৳১,০০,০০০। অ্যাকাউন্টে মোট জমা ৳১,০০,০০০ না হওয়া পর্যন্ত কেউ Loan নিতে পারবে না। আবেদন করলে Pending থাকবে। Admin Accept করলে Confirmed হবে, Reject করলে বাতিল হবে।</p>
+    <div class="row">
+      <select id="loanMember"></select>
+      <input id="loanAmount" type="number" min="1" max="100000" step="1" placeholder="Loan amount (৳)">
+      <button onclick="submitLoan()">Loan আবেদন করুন</button>
+    </div>
+    <div id="loanList"></div>
+  </div>
+</div>
+
+<script>
+// Show errors even if the Firebase module fails to load.
+window.addEventListener('error', function (event) {
+  const status = document.getElementById('authStatus');
+  if (status) status.textContent = 'পেজের JavaScript/Firebase লোডে সমস্যা: ' + (event.message || 'Script load failed');
+});
+window.addEventListener('unhandledrejection', function (event) {
+  const status = document.getElementById('authStatus');
+  if (status) status.textContent = 'Firebase error: ' + (event.reason?.code || event.reason?.message || 'unknown');
+});
+</script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-app.js";
+import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/13.0.0/firebase-auth.js";
+const firebaseConfig = {
+ apiKey: "AIzaSyDwpmk4din-TO3zU4rPOaxtnMfldyyDyvw",
+ authDomain: "payment-system-d7850.firebaseapp.com",
+ projectId: "payment-system-d7850",
+ storageBucket: "payment-system-d7850.firebasestorage.app",
+ messagingSenderId: "140003791347",
+ appId: "1:140003791347:web:c531ae05999e280d958286"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+const auth = getAuth(app);
+document.getElementById("authStatus").textContent = "Firebase লোড হয়েছে। লগইন করার জন্য প্রস্তুত।";
+
+// Must match the UID of the admin account created in Firebase Authentication.
+const ADMIN_UID = "r9exjgIbOcbmA5ikQKNtnseihHJ2";
+let currentUser = null;
+function isAdmin(){ return !!currentUser && currentUser.uid === ADMIN_UID; }
+function updateAdminUI(){
+  const panel = document.getElementById("adminPanel");
+  const status = document.getElementById("authStatus");
+  const loginButton = document.getElementById("loginButton");
+  const logoutButton = document.getElementById("logoutButton");
+  if (isAdmin()) {
+    status.textContent = "অ্যাডমিন হিসেবে লগইন করা হয়েছে।";
+    panel.classList.remove("hidden");
+    loginButton.classList.add("hidden");
+    logoutButton.classList.remove("hidden");
+  } else {
+    status.textContent = currentUser ? "এই অ্যাকাউন্টটি অ্যাডমিন নয়।" : "অ্যাডমিন লগইন করা নেই।";
+    panel.classList.add("hidden");
+    loginButton.classList.remove("hidden");
+    logoutButton.classList.add("hidden");
+  }
+}
+document.getElementById("loginButton").addEventListener("click", async () => {
+  const email = document.getElementById("adminEmail").value.trim();
+  const password = document.getElementById("adminPassword").value;
+  const status = document.getElementById("authStatus");
+  if (!email || !password) {
+    status.textContent = "Admin email ও password দিন।";
+    alert("Admin email ও password দিন।");
+    return;
+  }
+  status.textContent = "লগইন চেষ্টা করা হচ্ছে… ১৫ সেকেন্ড অপেক্ষা করুন।";
+  try {
+    const loginPromise = signInWithEmailAndPassword(auth, email, password);
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => {
+      const err = new Error("Login request timed out after 15 seconds");
+      err.code = "auth/request-timeout";
+      reject(err);
+    }, 15000));
+    const credential = await Promise.race([loginPromise, timeoutPromise]);
+    if (credential.user.uid !== ADMIN_UID) {
+      status.textContent = "লগইন হয়েছে, কিন্তু এই অ্যাকাউন্টটি অনুমোদিত Admin নয়। Firebase Authentication-এর UID ADMIN_UID-এর সঙ্গে মিলিয়ে নিন।";
+      await signOut(auth);
+      alert("লগইন সফল, কিন্তু এই অ্যাকাউন্টটি অনুমোদিত Admin নয়। Firebase Authentication-এ UID মিলিয়ে নিন।");
+      return;
+    }
+    status.textContent = "অ্যাডমিন হিসেবে লগইন সফল হয়েছে।";
+  } catch (e) {
+    console.error("Firebase sign-in error:", e);
+    const code = e?.code || "unknown";
+    const messages = {
+      "auth/invalid-credential": "ইমেইল বা পাসওয়ার্ড ভুল, অথবা অ্যাকাউন্টটি পাওয়া যায়নি।",
+      "auth/invalid-email": "ইমেইল ঠিকানাটি সঠিক নয়।",
+      "auth/user-disabled": "এই Firebase ব্যবহারকারী অ্যাকাউন্টটি নিষ্ক্রিয়।",
+      "auth/too-many-requests": "অনেকবার চেষ্টা করা হয়েছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।",
+      "auth/network-request-failed": "নেটওয়ার্ক সংযোগে সমস্যা হয়েছে।",
+      "auth/operation-not-allowed": "Firebase Console-এ Email/Password sign-in চালু নেই।",
+      "auth/unauthorized-domain": "এই ওয়েবসাইটের ডোমেইন Firebase Authentication-এ অনুমোদিত নয়।"
+    };
+    const detail = messages[code] || (code === "auth/request-timeout"
+      ? "১৫ সেকেন্ডেও উত্তর আসেনি। ইন্টারনেট পরীক্ষা করুন; ফাইলটি local file হিসেবে খুললে Firebase module আটকে যেতে পারে। HTTPS hosting-এ চালিয়ে দেখুন।"
+      : "Firebase Authentication সেটিংস ও সংযোগ পরীক্ষা করুন।");
+    status.textContent = `লগইন ব্যর্থ — ${code}: ${detail}`;
+    alert(`লগইন ব্যর্থ\nError code: ${code}\n${detail}`);
+  }
+});
+document.getElementById("logoutButton").addEventListener("click", async () => {
+  try { await signOut(auth); } catch(e) { console.error(e); }
+});
+onAuthStateChanged(auth, user => {
+  currentUser = user;
+  updateAdminUI();
+});
+const dataRef = doc(db, "appData", "main");
+const members = ["শামিম","শামিম (২)","বড় শামীম","মমিন","রিয়াজ","রিয়াজ (২)","সাব্বির","সজিব","সাউন","শান্ত","জিহাদ"];
+let payments = Object.fromEntries(members.map(m => [m, []]));
+let loans = [], ready = false;
+const LOAN_LIMIT = 100000;
+function money(n){return Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+" AED";}
+function showError(e){console.error(e);alert("Firebase-এ তথ্য লোড/সংরক্ষণ হয়নি। Firestore Rules ও ইন্টারনেট সংযোগ পরীক্ষা করুন।");}
+async function saveAll(){if(!ready)return;try{await setDoc(dataRef,{payments,loans,updatedAt:new Date().toISOString()});}catch(e){showError(e);}}
+async function loadData(){
+ try{const snap=await getDoc(dataRef);if(snap.exists()){const d=snap.data();members.forEach(m=>payments[m]=Array.isArray(d.payments?.[m])?d.payments[m]:[]);loans=Array.isArray(d.loans)?d.loans:[];}else{await setDoc(dataRef,{payments,loans,updatedAt:new Date().toISOString()});}ready=true;renderAll();}
+ catch(e){showError(e);document.getElementById("overallResult").innerHTML='<p class="pending">Firebase সংযোগ ব্যর্থ। Firestore Rules সেট করা আছে কি না দেখুন।</p>';}
+}
+function fillSelects(){const o=members.map(m=>`<option value="${m}">${m}</option>`).join("");document.getElementById("memberSelect").innerHTML=o;document.getElementById("adminMember").innerHTML=o;document.getElementById("loanMember").innerHTML=o;}
+function showMember(){
+ const m=document.getElementById("memberSelect").value, rows=[...(payments[m]||[])].sort((a,b)=>a.month.localeCompare(b.month));
+ const paid=rows.filter(r=>(r.status||"Paid")==="Paid").reduce((s,r)=>s+Number(r.amount),0), pending=rows.filter(r=>(r.status||"Paid")==="Pending").reduce((s,r)=>s+Number(r.amount),0);
+ let h=`<h3>${m}</h3>`;if(!rows.length)h+="<p>এখনও কোনো জমার তথ্য নেই।</p>";else h+=`<table><tr><th>মাস</th><th>টাকা</th><th>Status</th></tr>`+rows.map(r=>{let st=r.status||"Paid";return `<tr><td>${r.month}</td><td>${money(r.amount)}</td><td class="${st==="Pending"?"pending":"paid"}">${st}</td></tr>`;}).join("")+"</table>";
+ h+=`<div class="summary">জমা হয়েছে: <b>${money(paid)}</b></div><div class="summary pending">Pending: ${money(pending)}</div>`;document.getElementById("memberResult").innerHTML=h;renderOverall();
+}
+function checkAdminPin(){if(!isAdmin()){alert("এই কাজের জন্য Admin হিসেবে লগইন করুন।");return false;}return true;}
+async function addPayment(){
+ if(!ready){alert("ডেটাবেস লোড হওয়া পর্যন্ত অপেক্ষা করুন।");return;}if(!checkAdminPin())return;
+ const m=document.getElementById("adminMember").value, month=document.getElementById("month").value, amount=Number(document.getElementById("amount").value), status=document.getElementById("status").value;
+ if(!month||!Number.isFinite(amount)||amount<0||(status==="Paid"&&amount===0)){alert("সদস্য, মাস এবং সঠিক টাকার পরিমাণ দিন।");return;}
+ const old=payments[m].find(r=>r.month===month);if(old){old.amount=amount;old.status=status;}else payments[m].push({month,amount,status});
+ await saveAll();document.getElementById("amount").value="";renderAll();
+}
+async function removePayment(m,month){if(!checkAdminPin())return;payments[m]=payments[m].filter(r=>r.month!==month);await saveAll();renderAll();}
+function renderAdmin(){
+ document.getElementById("adminList").innerHTML=members.map(m=>{let rows=[...(payments[m]||[])].sort((a,b)=>a.month.localeCompare(b.month));if(!rows.length)return `<div class="member"><b>${m}</b> — কোনো এন্ট্রি নেই</div>`;return `<div class="member"><b>${m}</b>`+rows.map(r=>{let st=r.status||"Paid";return `<div>${r.month}: ${money(r.amount)} — <span class="${st==="Pending"?"pending":"paid"}">${st}</span> <button class="danger" style="padding:6px 9px;font-size:12px" data-member="${m}" data-month="${r.month}">মুছুন</button></div>`;}).join("")+"</div>";}).join("");
+ document.querySelectorAll("#adminList button[data-member]").forEach(b=>b.addEventListener("click",()=>removePayment(b.dataset.member,b.dataset.month)));
+}
+function renderOverall(){let paid=0,pending=0,pc=0,qc=0;members.forEach(m=>(payments[m]||[]).forEach(r=>{let a=Number(r.amount);if((r.status||"Paid")==="Pending"){pending+=a;qc++;}else{paid+=a;pc++;}}));document.getElementById("overallResult").innerHTML=`<div class="grand">মোট জমা হয়েছে: ${money(paid)}</div><div class="summary">Paid এন্ট্রি: ${pc} টি</div><div class="summary pending">মোট Pending: ${money(pending)} (${qc} টি)</div>`;}
+async function submitLoan(){
+ if(!ready){alert("ডেটাবেস লোড হওয়া পর্যন্ত অপেক্ষা করুন।");return;}
+ if(!isAdmin()){alert("এই সংস্করণে Loan আবেদন জমা দিতে Admin লগইন দরকার। সদস্যদের জন্য আলাদা নিরাপদ Loan submission ব্যবস্থা পরের ধাপে করতে হবে।");return;}
+ const member=document.getElementById("loanMember").value,amount=Number(document.getElementById("loanAmount").value);
+ const total=members.reduce((t,m)=>t+(payments[m]||[]).filter(r=>(r.status||"Paid")==="Paid").reduce((s,r)=>s+Number(r.amount),0),0);
+ if(total<LOAN_LIMIT){alert(`অ্যাকাউন্টে মোট জমা এখন ৳${total.toLocaleString("en-US")}। Loan নিতে হলে ৳১,০০,০০০ জমা হতে হবে। আরও ৳${(LOAN_LIMIT-total).toLocaleString("en-US")} প্রয়োজন।`);return;}
+ if(loans.some(x=>x.status==="Pending"||x.status==="Accepted")){alert("একটি Loan Pending বা Accepted থাকা অবস্থায় নতুন আবেদন করা যাবে না।");return;}
+ if(!Number.isFinite(amount)||amount<1||amount>LOAN_LIMIT){alert("Loan-এর পরিমাণ ১ থেকে ১,০০,০০০ টাকার মধ্যে দিন।");return;}
+ loans.push({id:Date.now(),member,amount,status:"Pending"});await saveAll();document.getElementById("loanAmount").value="";renderLoans();
+}
+async function adminLoanAction(id,action){if(!checkAdminPin())return;const l=loans.find(x=>x.id===id);if(!l)return;l.status=action==="accept"?"Accepted":"Rejected";await saveAll();renderLoans();}
+function renderLoans(){const el=document.getElementById("loanList");if(!loans.length){el.innerHTML="<p>এখনও কোনো Loan আবেদন নেই।</p>";return;}el.innerHTML=loans.slice().reverse().map(l=>{const a=l.status==="Pending"?`<button data-loan="${l.id}" data-action="accept">Accept</button> <button class="danger" data-loan="${l.id}" data-action="reject">Reject</button>`:"";return `<div class="member"><b>${l.member}</b> — ${Number(l.amount).toLocaleString("en-US")} ৳ — <span class="${l.status==="Pending"?"pending":"paid"}">${l.status}</span> ${a}</div>`;}).join("");el.querySelectorAll("button[data-loan]").forEach(b=>b.addEventListener("click",()=>adminLoanAction(Number(b.dataset.loan),b.dataset.action)));}
+function renderAll(){renderAdmin();showMember();renderLoans();}
+fillSelects();loadData();
+</script>
+</body>
+</html>
