@@ -220,7 +220,7 @@ async function adminLoanAction(id,action){if(!checkAdminPin())return;const l=loa
 function renderLoans(){const el=document.getElementById("loanList");if(!loans.length){el.innerHTML="<p>এখনও কোনো Loan আবেদন নেই।</p>";return;}el.innerHTML=loans.slice().reverse().map(l=>{const a=l.status==="Pending"?`<button data-loan="${l.id}" data-action="accept">Accept</button> <button class="danger" data-loan="${l.id}" data-action="reject">Reject</button>`:"";return `<div class="member"><b>${l.member}</b> — ${Number(l.amount).toLocaleString("en-US")} ৳ — <span class="${l.status==="Pending"?"pending":"paid"}">${l.status}</span> ${a}</div>`;}).join("");el.querySelectorAll("button[data-loan]").forEach(b=>b.addEventListener("click",()=>adminLoanAction(Number(b.dataset.loan),b.dataset.action)));}
 function renderAll(){renderAdmin();showMember();renderLoans();}
 fillSelects();loadData();
-  window.addPayment = addPayment; ।
+  window.addPayment = addPayment;
 </script>
 </body>
 </html>
